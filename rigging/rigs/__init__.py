@@ -8,7 +8,6 @@
 #
 # See the LICENSE file in the source distribution for further information.
 
-import ast
 import inspect
 import json
 import logging
@@ -19,15 +18,32 @@ import string
 import socket
 import sys
 import tarfile
+import tempfile
 import time
 
+from argparse import Action
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from concurrent.futures import thread
 from datetime import datetime
+from rigging.actions import BaseAction
 from rigging.exceptions import *
 
 RIG_DIR = '/var/run/rig/'
-RIG_TMP_DIR = '/var/tmp/rig/'
+RIG_TMP_DIR_PREFIX = '/var/tmp/rig'
+
+
+class RigExtendOption(Action):
+    """
+    Implementation of the 'extend' action from python-3.8+ for older runtimes
+
+    This will be registered as 'rigextend' to not clobber newer runtimes.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        items = [opt for opt in values.split(',')]
+        if getattr(namespace, self.dest):
+            items += getattr(namespace, self.dest)
+        setattr(namespace, self.dest, items)
 
 
 class BaseRig():
@@ -62,10 +78,12 @@ class BaseRig():
         self.resource_name = self.__class__.__name__.lower()
         self.parser_usage = self.parser_usage % {'name': self.resource_name}
         self.pool = None
+        self.archive_name = None
         self.parser = parser
         self.restart_count = 0
         subparser = self.parser.add_subparsers()
         self.rig_parser = subparser.add_parser(self.resource_name)
+        self.rig_parser.register('action', 'rigextend', RigExtendOption)
         self.rig_parser = self._setup_parser(self.rig_parser)
 
         self.supported_actions = self._load_supported_actions()
@@ -93,7 +111,7 @@ class BaseRig():
             self.log_debug("Initializing %s rig %s" %
                            (self.resource_name, self.id))
             self._sock, self._sock_address = self._create_rig_socket()
-            self._tmp_dir = self._create_temp_dir()
+            self._create_temp_dir()
             self.files = []
 
     def set_rig_id(self):
@@ -179,11 +197,11 @@ class BaseRig():
         Create a temp directory for rig to use for saving created files too
         """
         try:
-            _dir = RIG_TMP_DIR + self.id + '/'
-            os.makedirs(_dir, exist_ok=True)
-            return _dir
-        except OSError:
-            raise CannotConfigureRigError('failed to create temp directory')
+            self._tmp_dir = tempfile.mkdtemp(prefix='rig.', dir='/var/tmp')
+        except Exception as err:
+            raise CannotConfigureRigError(
+                "failed to create temp directory: %s" % err
+            )
 
     def _load_args(self):
         """
@@ -228,8 +246,13 @@ class BaseRig():
                     mod_short_name = modname.split('.')[2]
                     mod = __import__(modname, globals(), locals(),
                                      [mod_short_name])
-                    module = inspect.getmembers(mod, inspect.isclass)[-1]
-                    actions[module[1].action_name] = module[1]
+                    modules = inspect.getmembers(mod, inspect.isclass)
+                    for module in modules:
+                        if module[1] == BaseAction:
+                            continue
+                        if not issubclass(module[1], BaseAction):
+                            continue
+                        actions[module[1].action_name] = module[1]
         return actions
 
     def _load_rig_wide_options(self):
@@ -463,7 +486,6 @@ class BaseRig():
                 conn.sendall(self._fmt_return(command=req['command'],
                                               output='No such attribute',
                                               success=False))
-            continue
 
     def _register_actions(self):
         """
@@ -522,6 +544,7 @@ class BaseRig():
                 print(self.id)
                 self._detach()
                 self.detached = True
+            if self.detached:
                 for action in self._actions:
                     self._actions[action].detached = True
             ret = self._create_and_monitor()
@@ -644,10 +667,11 @@ class BaseRig():
             self.log_info('No data generated to archive for this rig.')
             return
         _arc_date = datetime.strftime(datetime.now(), '%Y-%m-%d-%H%M%S')
-        _arc_name = "/var/tmp/rig-%s-%s.tar.gz" % (self.id, _arc_date)
-        with tarfile.open(_arc_name, 'w:gz') as tar:
-            tar.add(self._tmp_dir)
-        return _arc_name
+        _arc_name = "rig-%s-%s" % (self.id, _arc_date)
+        _arc_fname = "/var/tmp/%s.tar.gz" % _arc_name
+        with tarfile.open(_arc_fname, 'w:gz') as tar:
+            tar.add(self._tmp_dir, arcname=_arc_name)
+        return _arc_fname
 
     def report_created_files(self):
         """
@@ -752,10 +776,10 @@ class BaseRig():
             pass
 
         try:
-            if self.archive_name or self._status == 'destroying':
+            if not self.get_option('no_archive'):
                 shutil.rmtree(self._tmp_dir)
-        except Exception:
-            pass
+        except Exception as err:
+            self.log_error("Could not remove temp dir: %s" % err)
 
     def _cleanup_socket(self):
         try:

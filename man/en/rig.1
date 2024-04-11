@@ -463,6 +463,81 @@ when the filesystem's %used exceeds this value.
 Note that using this option is ultimately the same as \fB\-\-fs-size\fR as rig
 will convert the specified percentage into a raw bytes value to use for comparisons.
 .RE
+.TP
+.B Network
+
+Monitor network traffic until a packet matching the given attributes appears.
+A packet must match all the provided attributes unless \fB\-\-any\fR is set.
+
+The following options are available for the \fBnetwork\fR rig:
+.RS 7
+.TP
+.B \-\-ifname INTERFACE_NAME
+Only traffic seen on this interface will be processed.
+.TP
+.B \-\-srcmac MAC
+Specify the source MAC address to match in the packet.
+.TP
+.B \-\-dstmac MAC
+Specify the destination MAC address to match in the packet.
+.TP
+.B \-\-srcip IP
+Specify the source IP address to match in the packet. Limited to IPv4 addresses.
+.TP
+.B \-\-dstip IP
+Specify the destination IP address to match in the packet. Limited to IPv4 addresses.
+.TP
+.B \-\-srcport PORT
+Specify the source port to match in the packet. It works with both UDP and TCP.
+.TP
+.B \-\-dstport PORT
+Specify the destination port to match in the packet. It works with both UDP and TCP.
+.TP
+.B \-\-tcpflags FLAG[|FLAG2...]
+For TCP traffic, specify a number of TCP flags that must be set in the packet.
+Multiple flags can be provided separated by the pipe character "|". Whenever one of
+the flags provided is found on the packet the evaluation will be true.
+
+Available TCP flags are:
+    FIN
+    SYN
+    RST
+    PSH
+    ACK
+    URG
+    ECN
+    CWR
+
+.TP
+.B \-\-icmptype ICMP-TYPE
+For ICMP traffic, specify an ICMP packet type.
+
+Available ICMP types are:
+    echo_reply
+    destination_unreachable
+    redirect
+    echo
+    router_advertisment
+    router_selection
+    time_exceeded
+    parameter_problem
+    timestamp
+    timestamp_reply
+    information_request
+    information_reply
+    address_mask_request
+    address_mask_reply
+    traceroute
+
+.TP
+.B \-\-any 
+If a packet matches any of the provided attributes then the packet will match.
+.TP
+.B \-\-payload REGEX
+Specify a regex that will be matched against the packet payload.
+This is useful for cleartext protocols like DNS or HTTP.
+
+.RE
 
 
 .SH ACTIONS
@@ -543,8 +618,8 @@ for information on what values are supported.
 
 .TP
 .B sosreport
-Run a sosreport after the rig has been triggered. Select plugin enablement options
-as well as the --plugin-option from sosreport are supported by this rig.
+Run an sos report after the rig has been triggered. Select plugin enablement options
+as well as the --plugin-option from sos report are supported by this rig.
 This action should run after any time-sensitive actions otherwise specified by
 the user for a given rig.
 
@@ -558,12 +633,12 @@ Enables this action
 Specifically force the specified comma-delimited list of PLUGINS to be enabled.
 .TP
 .B \-\-plugin-option PLUGOPT
-Modify a specific plugin's runtime options. This is passed directly to sosreport
+Modify a specific plugin's runtime options. This is passed directly to sos report
 as the same --plugin-option value, which should take the form 'name.option=value'.
 For example, to increase the podman plugin timeout use
 \'--plugin-option podman.timeout=600\'.
 
-If you need to pass multiple sosreport plugin options, use a comma-delimited list
+If you need to pass multiple sos report plugin options, use a comma-delimited list
 here instead of specifying this option multiple times.
 .TP
 .B \-\-skip-plugins PLUGINS
@@ -627,6 +702,50 @@ E.G. Using a CAPTURES of 2 and a DUMP-SIZE of 5, then when the rig terminates yo
 have up to 2 5MB packet captures.
 
 Default: 1 (packet capture file is replaced upon reaching SIZE limit).
+.TP
+.RE
+.TP
+.B monitor
+While a rig is running, monitor various system statistics and record them for
+later review. These statistics may be file contents or command outputs.
+
+This action begins collecting information when the rig is started, and stops when
+the rig is triggered.
+
+By default, networking-centric information is monitored via commands such as netstat,
+ss, top, ps, and more. Similarly several networking-related files under /proc/ are
+monitored.
+
+The rate at which these collections take place is controlled via the \fB--interval\fR option.
+
+The \fBmonitor\fR action supports the following options:
+.RS 7
+.TP
+.B \-\-monitor
+Enables this action.
+.TP
+.B \-\-disable-monitor-defaults
+Do not monitor or collect any of the default items. This implies that all collections
+will be specified via \fB\-\-monitor-files\fR and/or \fB\-\-monitor-commands\fR.
+.TP
+.B \-\-monitor-files FILES
+A comma-delimited list of files to monitor. Monitored files have their contents copied
+to a file within the rig's archive of the same name. The contents will be separated by
+a timestamp header taken at the time of collection.
+.TP
+.B \-\-monitor-commands COMMANDS
+A comma-delimited list of commands to execute every \fB\-\-interval\fR seconds, and
+have that output saved to a file within the rig's archive. Output collections are separated
+by a timestamp header taken at the time of collection.
+
+Note that commands will need to be properly quoted if there are spaces (or other quotes)
+in the command string. For example, to run 'ps auxwww' the proper invocation would be
+\fB\-\-monitor-commands='ps auxwww'\fR.
+
+\fBIn-line shell scripting is not supported.\fR While it may be possible for such
+values to function, there are no guarantees as to those executions working properly,
+at all, not causing unintended side-effects or harm, et cetera. Dragons ahead, and
+so forth.
 .TP
 .RE
 .TP
